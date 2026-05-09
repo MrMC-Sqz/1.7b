@@ -104,6 +104,8 @@ def main() -> None:
     parser.add_argument("--use-qwen", action="store_true", help="Use QwenIntentEngine.")
     parser.add_argument("--threshold", type=float, default=0.7, help="Urgency threshold.")
     parser.add_argument("--wait-ms", type=int, default=800, help="Response wait window in ms.")
+    parser.add_argument("--max-new-tokens", type=int, default=64, help="Max new tokens for intent model.")
+    parser.add_argument("--infer-timeout-sec", type=float, default=20.0, help="Intent inference timeout.")
     args = parser.parse_args()
 
     rows = _load_jsonl(Path(args.input))
@@ -112,6 +114,8 @@ def main() -> None:
         use_qwen_intent_engine=args.use_qwen,
         urgency_threshold=args.threshold,
         wait_ms=args.wait_ms,
+        intent_max_new_tokens=args.max_new_tokens,
+        intent_inference_timeout_sec=args.infer_timeout_sec,
     )
     pipeline = ActiveResponsePipeline(config=cfg)
     events = pipeline.run(utterances)
@@ -125,6 +129,8 @@ def main() -> None:
             "use_qwen": args.use_qwen,
             "threshold": args.threshold,
             "wait_ms": args.wait_ms,
+            "max_new_tokens": args.max_new_tokens,
+            "infer_timeout_sec": args.infer_timeout_sec,
         },
         "classification": cls_metrics,
         "latency": lat_metrics,

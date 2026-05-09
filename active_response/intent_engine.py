@@ -246,7 +246,33 @@ class QwenIntentEngine(BaseIntentEngine):
 
         # 3) binary semantic fallback
         lowered = raw.lower()
-        if "true" in lowered or "需要" in raw:
+        if re.search(r"should_respond[^a-z0-9]*false", lowered):
+            return {
+                "score": 0.2,
+                "should_respond": False,
+                "reason": "qwen_non_json_negative",
+                "reply": "",
+            }
+
+        negative_markers = ("不需要响应", "无需响应", "不用响应", "不要响应", "无需回复", "不用回复")
+        if any(marker in raw for marker in negative_markers):
+            return {
+                "score": 0.2,
+                "should_respond": False,
+                "reason": "qwen_non_json_negative",
+                "reply": "",
+            }
+
+        if re.search(r"should_respond[^a-z0-9]*true", lowered):
+            return {
+                "score": 0.8,
+                "should_respond": True,
+                "reason": "qwen_non_json_positive",
+                "reply": "收到，我来帮你处理。",
+            }
+
+        positive_markers = ("需要响应", "应该响应", "应当响应", "需要系统响应")
+        if any(marker in raw for marker in positive_markers):
             return {
                 "score": 0.8,
                 "should_respond": True,
@@ -254,8 +280,8 @@ class QwenIntentEngine(BaseIntentEngine):
                 "reply": "收到，我来帮你处理。",
             }
         return {
-            "score": 0.2,
+            "score": 0.5,
             "should_respond": False,
-            "reason": "qwen_non_json_negative",
+            "reason": "qwen_non_json_uncertain",
             "reply": "",
         }
