@@ -11,7 +11,11 @@ def run_offline_demo() -> None:
         Utterance("u4", "B", "算了不用了", 3200, 3600),
         Utterance("u5", "A", "帮我导航去公司", 5000, 5800),
     ]
-    config = V1Config(use_qwen_intent_engine=False, urgency_threshold=0.7, wait_ms=800)
+    config = V1Config(
+        use_qwen_intent_engine=False,
+        urgency_threshold=0.7,
+        wait_ms=800,
+    )
     pipeline = ActiveResponsePipeline(config=config)
     events = pipeline.run(utterances)
     print("=== Offline Decision Events ===")

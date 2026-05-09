@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+from dataclasses import asdict
 from typing import Sequence
 
 from .config import V1Config
@@ -30,6 +33,7 @@ class ActiveResponsePipeline:
             next_start = ordered[idx + 1].start_ms if idx + 1 < len(ordered) else None
             events.extend(self.process_utterance(utt, next_start_ms=next_start))
         events.extend(self.finalize())
+        self._log_events(events)
         return events
 
     def process_utterance(
@@ -53,6 +57,7 @@ class ActiveResponsePipeline:
                     )
                 )
             self.context_buffer.add_utterance(utterance)
+            self._log_events(events)
             return events
 
         if pending_same_speaker and self._is_merge_update(utterance.text):
@@ -73,6 +78,7 @@ class ActiveResponsePipeline:
                     )
                 )
             self.context_buffer.add_utterance(utterance)
+            self._log_events(events)
             return events
 
         context = self.context_buffer.recent_context(
@@ -92,6 +98,7 @@ class ActiveResponsePipeline:
                     reason=intent.reason or "below_threshold",
                 )
             )
+            self._log_events(events)
             return events
 
         pending = PendingResponse(
@@ -130,10 +137,13 @@ class ActiveResponsePipeline:
                         response=removed.response,
                     )
                 )
+        self._log_events(events)
         return events
 
     def finalize(self) -> list[DecisionEvent]:
-        return self._flush_due(until_ms=10**18)
+        events = self._flush_due(until_ms=10**18)
+        self._log_events(events)
+        return events
 
     def _flush_due(self, until_ms: int) -> list[DecisionEvent]:
         due = self.response_manager.pop_due(current_time_ms=until_ms)
@@ -157,9 +167,21 @@ class ActiveResponsePipeline:
                 urgency_threshold=self.config.urgency_threshold,
                 device_map=self.config.intent_device_map,
                 max_new_tokens=self.config.intent_max_new_tokens,
+                inference_timeout_sec=self.config.intent_inference_timeout_sec,
                 fallback_engine=fallback,
             )
         return fallback
+
+    def _log_events(self, events: list[DecisionEvent]) -> None:
+        if not events or not self.config.event_log_path:
+            return
+        log_path = self.config.event_log_path
+        parent = os.path.dirname(log_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as handle:
+            for event in events:
+                handle.write(json.dumps(asdict(event), ensure_ascii=False) + "\n")
 
     @staticmethod
     def _contains_any(text: str, tokens: Sequence[str]) -> bool:

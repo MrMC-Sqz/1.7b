@@ -81,7 +81,6 @@ class PipelineTest(unittest.TestCase):
         )
         events = []
         events.extend(pipeline.process_utterance(Utterance("u1", "A", "open ac", 0, 1000)))
-        # This utterance starts after u1 delivery time (1500), so delivery should flush before scoring u2.
         events.extend(pipeline.process_utterance(Utterance("u2", "B", "chat", 1700, 2100)))
         events.extend(pipeline.finalize())
         self.assertEqual(events[0].event_type, "delivered")

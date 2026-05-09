@@ -37,6 +37,8 @@ class RuleBasedIntentEngine(BaseIntentEngine):
         "暂停",
         "下一首",
         "打电话",
+        "开一下",
+        "关一下",
     )
     _LOW_PRIORITY_CHAT_KEYWORDS = (
         "哈哈",
@@ -112,6 +114,7 @@ class QwenIntentEngine(BaseIntentEngine):
     urgency_threshold: float = 0.7
     device_map: str = "auto"
     max_new_tokens: int = 96
+    inference_timeout_sec: float = 20.0
     fallback_engine: BaseIntentEngine | None = None
 
     _tokenizer: Any = None
@@ -121,16 +124,10 @@ class QwenIntentEngine(BaseIntentEngine):
     def score(self, context: Sequence[Utterance], current_utt: Utterance) -> IntentResult:
         self._ensure_model()
         if self._model is None or self._tokenizer is None:
-            if self.fallback_engine is not None:
-                result = self.fallback_engine.score(context=context, current_utt=current_utt)
-                result.reason = f"fallback_rule_engine:{self._load_error or 'unknown_error'}"
-                return result
-            return IntentResult(
-                utterance_id=current_utt.utterance_id,
-                score=0.0,
-                should_respond=False,
+            return self._fallback(
+                context=context,
+                current_utt=current_utt,
                 reason=f"qwen_unavailable:{self._load_error or 'unknown_error'}",
-                draft_reply=None,
             )
 
         prompt = self._build_prompt(context=context, current_utt=current_utt)
@@ -142,7 +139,13 @@ class QwenIntentEngine(BaseIntentEngine):
                 add_generation_prompt=True,
             )
             inputs = self._tokenizer([text], return_tensors="pt").to(self._model.device)
-            outputs = self._model.generate(**inputs, max_new_tokens=self.max_new_tokens)
+            outputs = self._model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens,
+                do_sample=False,
+                max_time=self.inference_timeout_sec,
+                temperature=None,
+            )
             generated = outputs[0][inputs.input_ids.shape[-1] :]
             raw = self._tokenizer.decode(generated, skip_special_tokens=True).strip()
             parsed = self._parse_output(raw=raw)
@@ -158,17 +161,29 @@ class QwenIntentEngine(BaseIntentEngine):
                 draft_reply=reply,
             )
         except Exception as exc:  # noqa: BLE001
-            if self.fallback_engine is not None:
-                result = self.fallback_engine.score(context=context, current_utt=current_utt)
-                result.reason = f"fallback_rule_engine:inference_error:{exc}"
-                return result
-            return IntentResult(
-                utterance_id=current_utt.utterance_id,
-                score=0.0,
-                should_respond=False,
+            return self._fallback(
+                context=context,
+                current_utt=current_utt,
                 reason=f"qwen_inference_error:{exc}",
-                draft_reply=None,
             )
+
+    def _fallback(
+        self,
+        context: Sequence[Utterance],
+        current_utt: Utterance,
+        reason: str,
+    ) -> IntentResult:
+        if self.fallback_engine is not None:
+            result = self.fallback_engine.score(context=context, current_utt=current_utt)
+            result.reason = f"fallback_rule_engine:{reason}"
+            return result
+        return IntentResult(
+            utterance_id=current_utt.utterance_id,
+            score=0.0,
+            should_respond=False,
+            reason=reason,
+            draft_reply=None,
+        )
 
     def _ensure_model(self) -> None:
         if self._model is not None and self._tokenizer is not None:
@@ -197,26 +212,39 @@ class QwenIntentEngine(BaseIntentEngine):
         ]
         history = "\n".join(history_lines) if history_lines else "(empty)"
         return (
-            "你是车载语音助手的主动响应判定器。"
-            "请判断当前句是否需要系统主动响应，并返回 JSON。\n"
-            "JSON schema: {\"score\":0~1, \"should_respond\":bool, \"reason\":str, \"reply\":str}\n"
+            "你是车载语音助手的主动响应判定器。请判断当前句是否需要系统主动响应，并返回 JSON。\n"
+            "输出必须是 JSON 且只允许以下字段："
+            "{\"score\":0~1,\"should_respond\":bool,\"reason\":str,\"reply\":str}。\n"
             "规则：若是闲聊或人与人对话，不要响应。若是车控、导航、媒体控制、明确求助，则倾向响应。\n"
             f"history:\n{history}\n"
             f"current:\n[{current_utt.start_ms}-{current_utt.end_ms}] speaker={current_utt.speaker_id}: {current_utt.text}\n"
-            "只输出 JSON，不要输出其他内容。"
+            "只输出 JSON。"
         )
 
     @staticmethod
     def _parse_output(raw: str) -> dict[str, Any]:
-        match = re.search(r"\{.*\}", raw, flags=re.S)
-        if match:
+        # 1) strict JSON object extraction
+        json_candidates = re.findall(r"\{[\s\S]*?\}", raw)
+        for chunk in json_candidates:
             try:
-                parsed = json.loads(match.group(0))
-                if isinstance(parsed, dict):
-                    return parsed
+                parsed = json.loads(chunk)
             except json.JSONDecodeError:
-                pass
-        # Fallback: derive a coarse score from text when JSON format is broken.
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+
+        # 2) weak pattern extraction
+        score_match = re.search(r"score[^0-9]*([01](?:\.\d+)?)", raw, flags=re.I)
+        if score_match:
+            score = float(score_match.group(1))
+            return {
+                "score": max(0.0, min(1.0, score)),
+                "should_respond": score >= 0.7,
+                "reason": "qwen_pattern_extracted",
+                "reply": "收到，我来帮你处理。",
+            }
+
+        # 3) binary semantic fallback
         lowered = raw.lower()
         if "true" in lowered or "需要" in raw:
             return {

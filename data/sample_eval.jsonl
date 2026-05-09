@@ -1,0 +1,5 @@
+{"utterance_id":"e1","speaker_id":"A","text":"今天天气不错","start_ms":0,"end_ms":900,"label_should_respond":false}
+{"utterance_id":"e2","speaker_id":"B","text":"帮我打开空调","start_ms":1000,"end_ms":1800,"label_should_respond":true}
+{"utterance_id":"e3","speaker_id":"B","text":"另外风量再小一点","start_ms":2200,"end_ms":3000,"label_should_respond":true}
+{"utterance_id":"e4","speaker_id":"B","text":"算了不用了","start_ms":3200,"end_ms":3600,"label_should_respond":false}
+{"utterance_id":"e5","speaker_id":"A","text":"帮我导航去公司","start_ms":5000,"end_ms":5800,"label_should_respond":true}

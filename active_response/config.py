@@ -11,3 +11,5 @@ class V1Config:
     intent_model_name: str = "Qwen/Qwen3-1.7B"
     intent_device_map: str = "auto"
     intent_max_new_tokens: int = 96
+    intent_inference_timeout_sec: float = 20.0
+    event_log_path: str | None = None
