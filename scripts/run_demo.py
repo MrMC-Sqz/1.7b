@@ -3,41 +3,40 @@ from active_response.domain import Utterance
 from active_response.pipeline import ActiveResponsePipeline
 
 
-def main() -> None:
+def run_offline_demo() -> None:
     utterances = [
-        Utterance(
-            utterance_id="u1",
-            speaker_id="A",
-            text="今天的天气真不错",
-            start_ms=0,
-            end_ms=900,
-        ),
-        Utterance(
-            utterance_id="u2",
-            speaker_id="B",
-            text="帮我打开空调",
-            start_ms=1000,
-            end_ms=1800,
-        ),
-        Utterance(
-            utterance_id="u3",
-            speaker_id="C",
-            text="我先接个电话",
-            start_ms=2200,
-            end_ms=3000,
-        ),
-        Utterance(
-            utterance_id="u4",
-            speaker_id="A",
-            text="帮我导航去公司",
-            start_ms=5000,
-            end_ms=5800,
-        ),
+        Utterance("u1", "A", "今天天气真不错", 0, 900),
+        Utterance("u2", "B", "帮我打开空调", 1000, 1800),
+        Utterance("u3", "B", "另外风量再小一点", 2200, 3000),
+        Utterance("u4", "B", "算了不用了", 3200, 3600),
+        Utterance("u5", "A", "帮我导航去公司", 5000, 5800),
     ]
-    pipeline = ActiveResponsePipeline(config=V1Config(urgency_threshold=0.7, wait_ms=800))
+    config = V1Config(use_qwen_intent_engine=False, urgency_threshold=0.7, wait_ms=800)
+    pipeline = ActiveResponsePipeline(config=config)
     events = pipeline.run(utterances)
+    print("=== Offline Decision Events ===")
+    for event in events:
+        print(
+            f"{event.event_type:11s} t={event.event_time_ms:5d}ms "
+            f"speaker={event.speaker_id} src={event.source_utt_id} "
+            f"reason={event.reason} response={event.response}"
+        )
 
-    print("=== Decision Events ===")
+
+def run_stream_demo() -> None:
+    config = V1Config(use_qwen_intent_engine=False, urgency_threshold=0.7, wait_ms=800)
+    pipeline = ActiveResponsePipeline(config=config)
+    events: list = []
+    sequence = [
+        Utterance("s1", "C", "帮我打开空调", 0, 800),
+        Utterance("s2", "C", "另外温度调低一点", 1200, 1900),
+        Utterance("s3", "C", "算了不用了", 2300, 2600),
+    ]
+    for item in sequence:
+        events.extend(pipeline.process_utterance(item))
+    events.extend(pipeline.finalize())
+
+    print("\n=== Stream Decision Events ===")
     for event in events:
         print(
             f"{event.event_type:11s} t={event.event_time_ms:5d}ms "
@@ -47,4 +46,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_offline_demo()
+    run_stream_demo()
