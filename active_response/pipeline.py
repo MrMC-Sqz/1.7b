@@ -8,7 +8,12 @@ from typing import Sequence
 from .config import V1Config
 from .context_buffer import ContextBuffer
 from .domain import DecisionEvent, PendingResponse, Utterance
-from .intent_engine import IntentEngine, QwenIntentEngine, RuleBasedIntentEngine
+from .intent_engine import (
+    IntentEngine,
+    QwenIntentEngine,
+    RuleBasedIntentEngine,
+    ScoreHeadIntentEngine,
+)
 from .response_manager import ResponseManager
 from .timing_policy import is_interrupted, plan_time
 
@@ -161,6 +166,12 @@ class ActiveResponsePipeline:
 
     def _build_default_intent_engine(self) -> IntentEngine:
         fallback = RuleBasedIntentEngine(urgency_threshold=self.config.urgency_threshold)
+        if self.config.use_score_head_intent_engine and self.config.score_head_model_path:
+            return ScoreHeadIntentEngine(
+                model_path=self.config.score_head_model_path,
+                urgency_threshold=self.config.urgency_threshold,
+                device="cuda",
+            )
         if self.config.use_qwen_intent_engine:
             return QwenIntentEngine(
                 model_name=self.config.intent_model_name,
@@ -168,6 +179,7 @@ class ActiveResponsePipeline:
                 device_map=self.config.intent_device_map,
                 max_new_tokens=self.config.intent_max_new_tokens,
                 inference_timeout_sec=self.config.intent_inference_timeout_sec,
+                disable_thinking=self.config.intent_disable_thinking,
                 fallback_engine=fallback,
             )
         return fallback

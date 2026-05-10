@@ -35,6 +35,7 @@
   - `IntentEngine` protocol
   - `RuleBasedIntentEngine` (fallback)
   - `QwenIntentEngine` (primary, uses Qwen3-1.7B)
+  - `ScoreHeadIntentEngine` (fine-tuned regression/classification head)
 - Output contract: always returns `IntentResult`.
 
 ## 5. `active_response/response_manager.py`
@@ -77,3 +78,16 @@
 
 ## 11. `tests/test_pipeline.py`
 - Purpose: core behavior coverage for no_need/interrupted/delivered/merged/discarded and stream flushing.
+
+## 12. `scripts/train_score_head.py`
+- Purpose: fine-tune a score head model from labeled JSONL, intended for GPU training.
+
+## 13. `scripts/build_semiauto_annotation_pool.py`
+- Purpose: build semi-auto annotation candidates with multi-engine scoring, disagreement, and uncertainty ranking.
+- Outputs:
+  - `scored_all.jsonl`
+  - `review_top_{k}.jsonl`
+  - `summary.json`
+
+## 14. `scripts/merge_review_labels.py`
+- Purpose: merge human-reviewed `human_label` values back into a base JSONL dataset and emit change logs.

@@ -42,7 +42,7 @@ class RuleBasedIntentEngine(BaseIntentEngine):
     )
     _LOW_PRIORITY_CHAT_KEYWORDS = (
         "哈哈",
-        "今天天气",
+        "天气",
         "吃饭",
         "电影",
         "八卦",
@@ -113,8 +113,9 @@ class QwenIntentEngine(BaseIntentEngine):
     model_name: str = "Qwen/Qwen3-1.7B"
     urgency_threshold: float = 0.7
     device_map: str = "auto"
-    max_new_tokens: int = 96
-    inference_timeout_sec: float = 20.0
+    max_new_tokens: int = 128
+    inference_timeout_sec: float = 25.0
+    disable_thinking: bool = True
     fallback_engine: BaseIntentEngine | None = None
 
     _tokenizer: Any = None
@@ -133,18 +134,18 @@ class QwenIntentEngine(BaseIntentEngine):
         prompt = self._build_prompt(context=context, current_utt=current_utt)
         try:
             messages = [{"role": "user", "content": prompt}]
-            text = self._tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            text = self._apply_chat_template(messages)
             inputs = self._tokenizer([text], return_tensors="pt").to(self._model.device)
+
+            eos = self._tokenizer.eos_token_id
             outputs = self._model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
                 do_sample=False,
+                num_beams=1,
                 max_time=self.inference_timeout_sec,
-                temperature=None,
+                eos_token_id=eos,
+                pad_token_id=eos,
             )
             generated = outputs[0][inputs.input_ids.shape[-1] :]
             raw = self._tokenizer.decode(generated, skip_special_tokens=True).strip()
@@ -166,6 +167,24 @@ class QwenIntentEngine(BaseIntentEngine):
                 current_utt=current_utt,
                 reason=f"qwen_inference_error:{exc}",
             )
+
+    def _apply_chat_template(self, messages: list[dict[str, str]]) -> str:
+        # Qwen3 tokenizer often supports enable_thinking=False; keep a safe fallback.
+        if self.disable_thinking:
+            try:
+                return self._tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=False,
+                )
+            except TypeError:
+                pass
+        return self._tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
 
     def _fallback(
         self,
@@ -202,6 +221,12 @@ class QwenIntentEngine(BaseIntentEngine):
                 trust_remote_code=True,
                 device_map=self.device_map,
             )
+            # Keep deterministic decode config aligned with do_sample=False to avoid noisy warnings.
+            gen_cfg = self._model.generation_config
+            gen_cfg.do_sample = False
+            gen_cfg.temperature = None
+            gen_cfg.top_p = None
+            gen_cfg.top_k = None
         except Exception as exc:  # noqa: BLE001
             self._load_error = str(exc)
 
@@ -211,18 +236,22 @@ class QwenIntentEngine(BaseIntentEngine):
             f"[{u.start_ms}-{u.end_ms}] speaker={u.speaker_id}: {u.text}" for u in context[-12:]
         ]
         history = "\n".join(history_lines) if history_lines else "(empty)"
+        # Keep prompt strict and short to reduce drift.
         return (
-            "你是车载语音助手的主动响应判定器。请判断当前句是否需要系统主动响应，并返回 JSON。\n"
-            "输出必须是 JSON 且只允许以下字段："
-            "{\"score\":0~1,\"should_respond\":bool,\"reason\":str,\"reply\":str}。\n"
-            "规则：若是闲聊或人与人对话，不要响应。若是车控、导航、媒体控制、明确求助，则倾向响应。\n"
+            "你是车载助手主动响应判定器。"
+            "只输出一个 JSON 对象，不要输出解释。\n"
+            "JSON schema: {\"score\":0~1,\"should_respond\":bool,\"reason\":str,\"reply\":str}\n"
+            "规则：闲聊/人与人对话通常不响应；车控、导航、媒体控制、明确求助优先响应。\n"
             f"history:\n{history}\n"
-            f"current:\n[{current_utt.start_ms}-{current_utt.end_ms}] speaker={current_utt.speaker_id}: {current_utt.text}\n"
-            "只输出 JSON。"
+            f"current:\n[{current_utt.start_ms}-{current_utt.end_ms}] "
+            f"speaker={current_utt.speaker_id}: {current_utt.text}\n"
         )
 
     @staticmethod
     def _parse_output(raw: str) -> dict[str, Any]:
+        # Remove optional thinking blocks if present.
+        raw = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+
         # 1) strict JSON object extraction
         json_candidates = re.findall(r"\{[\s\S]*?\}", raw)
         for chunk in json_candidates:
@@ -233,7 +262,7 @@ class QwenIntentEngine(BaseIntentEngine):
             if isinstance(parsed, dict):
                 return parsed
 
-        # 2) weak pattern extraction
+        # 2) weak score extraction
         score_match = re.search(r"score[^0-9]*([01](?:\.\d+)?)", raw, flags=re.I)
         if score_match:
             score = float(score_match.group(1))
@@ -244,7 +273,6 @@ class QwenIntentEngine(BaseIntentEngine):
                 "reply": "收到，我来帮你处理。",
             }
 
-        # 3) binary semantic fallback
         lowered = raw.lower()
         if re.search(r"should_respond[^a-z0-9]*false", lowered):
             return {
@@ -253,16 +281,6 @@ class QwenIntentEngine(BaseIntentEngine):
                 "reason": "qwen_non_json_negative",
                 "reply": "",
             }
-
-        negative_markers = ("不需要响应", "无需响应", "不用响应", "不要响应", "无需回复", "不用回复")
-        if any(marker in raw for marker in negative_markers):
-            return {
-                "score": 0.2,
-                "should_respond": False,
-                "reason": "qwen_non_json_negative",
-                "reply": "",
-            }
-
         if re.search(r"should_respond[^a-z0-9]*true", lowered):
             return {
                 "score": 0.8,
@@ -271,17 +289,101 @@ class QwenIntentEngine(BaseIntentEngine):
                 "reply": "收到，我来帮你处理。",
             }
 
-        positive_markers = ("需要响应", "应该响应", "应当响应", "需要系统响应")
-        if any(marker in raw for marker in positive_markers):
-            return {
-                "score": 0.8,
-                "should_respond": True,
-                "reason": "qwen_non_json_positive",
-                "reply": "收到，我来帮你处理。",
-            }
+        # Conservative fallback.
         return {
             "score": 0.5,
             "should_respond": False,
             "reason": "qwen_non_json_uncertain",
             "reply": "",
         }
+
+
+@dataclass(slots=True)
+class ScoreHeadIntentEngine(BaseIntentEngine):
+    model_path: str
+    urgency_threshold: float = 0.7
+    device: str = "cuda"
+
+    _tokenizer: Any = None
+    _model: Any = None
+    _load_error: str | None = None
+
+    def score(self, context: Sequence[Utterance], current_utt: Utterance) -> IntentResult:
+        self._ensure_model()
+        if self._model is None or self._tokenizer is None:
+            return IntentResult(
+                utterance_id=current_utt.utterance_id,
+                score=0.0,
+                should_respond=False,
+                reason=f"score_head_unavailable:{self._load_error or 'unknown_error'}",
+                draft_reply=None,
+            )
+
+        text = self._build_input_text(context=context, current_utt=current_utt)
+        try:
+            import torch
+
+            inputs = self._tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=1024,
+            )
+            inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
+            with torch.no_grad():
+                out = self._model(**inputs)
+                raw_score = float(out.logits.squeeze().item())
+            score = max(0.0, min(1.0, raw_score))
+            should = score >= self.urgency_threshold
+            reply = "收到，我来帮你处理。" if should else None
+            return IntentResult(
+                utterance_id=current_utt.utterance_id,
+                score=round(score, 3),
+                should_respond=should,
+                reason="score_head_scored",
+                draft_reply=reply,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return IntentResult(
+                utterance_id=current_utt.utterance_id,
+                score=0.0,
+                should_respond=False,
+                reason=f"score_head_inference_error:{exc}",
+                draft_reply=None,
+            )
+
+    def _ensure_model(self) -> None:
+        if self._model is not None and self._tokenizer is not None:
+            return
+        if self._load_error is not None:
+            return
+        try:
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+        except Exception as exc:  # noqa: BLE001
+            self._load_error = f"missing_runtime:{exc}"
+            return
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
+            self._model = AutoModelForSequenceClassification.from_pretrained(
+                self.model_path,
+                trust_remote_code=True,
+            )
+            target_device = "cuda" if self.device == "cuda" and torch.cuda.is_available() else "cpu"
+            self._model.to(target_device)
+            self._model.eval()
+        except Exception as exc:  # noqa: BLE001
+            self._load_error = str(exc)
+
+    @staticmethod
+    def _build_input_text(context: Sequence[Utterance], current_utt: Utterance) -> str:
+        history_lines = [
+            f"[{u.start_ms}-{u.end_ms}] {u.speaker_id}: {u.text}" for u in context[-12:]
+        ]
+        history = "\n".join(history_lines) if history_lines else "(empty)"
+        return (
+            "Task: predict response urgency score in [0,1] for in-car assistant.\n"
+            f"history:\n{history}\n"
+            f"current:\n[{current_utt.start_ms}-{current_utt.end_ms}] "
+            f"{current_utt.speaker_id}: {current_utt.text}\n"
+        )

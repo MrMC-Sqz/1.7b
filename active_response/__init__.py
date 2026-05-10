@@ -1,7 +1,7 @@
 from .config import V1Config
 from .context_buffer import ContextBuffer
 from .domain import DecisionEvent, IntentResult, PendingResponse, Utterance
-from .intent_engine import QwenIntentEngine, RuleBasedIntentEngine
+from .intent_engine import QwenIntentEngine, RuleBasedIntentEngine, ScoreHeadIntentEngine
 from .pipeline import ActiveResponsePipeline
 from .response_manager import ResponseManager
 
@@ -14,6 +14,7 @@ __all__ = [
     "QwenIntentEngine",
     "ResponseManager",
     "RuleBasedIntentEngine",
+    "ScoreHeadIntentEngine",
     "Utterance",
     "V1Config",
 ]
