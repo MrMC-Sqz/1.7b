@@ -1,5 +1,6 @@
 import argparse
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +72,13 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--eval-ratio", type=float, default=0.1)
     parser.add_argument("--max-length", type=int, default=256)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--pos-weight",
+        type=float,
+        default=0.0,
+        help="Positive class weight for BCEWithLogits (0 means auto from train split).",
+    )
     args = parser.parse_args()
 
     import torch
@@ -81,6 +89,8 @@ def main() -> None:
     items = load_items(Path(args.train_jsonl))
     if len(items) < 10:
         raise ValueError("Need at least 10 samples for a minimal fine-tuning run.")
+    rng = random.Random(args.seed)
+    rng.shuffle(items)
     train_items, eval_items = split_train_eval(items, args.eval_ratio)
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model, trust_remote_code=True)
@@ -111,13 +121,28 @@ def main() -> None:
     eval_loader = DataLoader(eval_items, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
+    train_pos = sum(1 for x in train_items if x.label >= 0.5)
+    train_neg = max(1, len(train_items) - train_pos)
+    if args.pos_weight > 0:
+        pos_weight_value = args.pos_weight
+    else:
+        pos_weight_value = train_neg / max(1, train_pos)
+    pos_weight = torch.tensor([pos_weight_value], dtype=torch.float32, device=device)
+    loss_fn = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    print(
+        f"train_size={len(train_items)} eval_size={len(eval_items)} "
+        f"train_pos={train_pos} train_neg={train_neg} pos_weight={pos_weight_value:.4f}"
+    )
+
     for epoch in range(args.epochs):
         running = 0.0
         steps = 0
         for batch in train_loader:
-            batch = {k: v.to(device) for k, v in batch.items()}
-            out = model(**batch)
-            loss = out.loss
+            labels = batch["labels"].to(device)
+            model_inputs = {k: v.to(device) for k, v in batch.items() if k != "labels"}
+            out = model(**model_inputs)
+            logits = out.logits.squeeze(-1)
+            loss = loss_fn(logits, labels)
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
@@ -132,10 +157,10 @@ def main() -> None:
         with torch.no_grad():
             for batch in eval_loader:
                 labels.extend([float(x) for x in batch["labels"].tolist()])
-                batch = {k: v.to(device) for k, v in batch.items()}
-                out = model(**batch)
-                # Regression output; clamp to [0,1].
-                scores = out.logits.squeeze(-1).detach().cpu().tolist()
+                model_inputs = {k: v.to(device) for k, v in batch.items() if k != "labels"}
+                out = model(**model_inputs)
+                probs = torch.sigmoid(out.logits.squeeze(-1)).detach().cpu().tolist()
+                scores = probs
                 if isinstance(scores, float):
                     scores = [scores]
                 preds.extend([max(0.0, min(1.0, float(s))) for s in scores])

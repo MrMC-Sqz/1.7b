@@ -91,3 +91,6 @@
 
 ## 14. `scripts/merge_review_labels.py`
 - Purpose: merge human-reviewed `human_label` values back into a base JSONL dataset and emit change logs.
+
+## 15. `scripts/auto_fill_review_labels.py`
+- Purpose: auto-fill `human_label` for semi-auto annotation rounds with configurable strategies.

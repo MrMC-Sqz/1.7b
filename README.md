@@ -111,3 +111,11 @@ python -m scripts.merge_review_labels \
   --output data/annotate_review/train_merged.jsonl \
   --changes-output data/annotate_review/train_merged_changes.jsonl
 ```
+
+Auto-fill review labels (semi-auto round):
+```bash
+python -m scripts.auto_fill_review_labels \
+  --input data/annotate_pool/stage2_scorehead_train_top4k/review_top_1200.jsonl \
+  --output data/annotate_review/review_top_1200_autolabeled_guarded.jsonl \
+  --strategy no_downgrade_rule
+```

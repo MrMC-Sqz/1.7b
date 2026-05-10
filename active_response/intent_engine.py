@@ -332,7 +332,8 @@ class ScoreHeadIntentEngine(BaseIntentEngine):
             inputs = {k: v.to(self._model.device) for k, v in inputs.items()}
             with torch.no_grad():
                 out = self._model(**inputs)
-                raw_score = float(out.logits.squeeze().item())
+                raw_logit = float(out.logits.squeeze().item())
+                raw_score = float(torch.sigmoid(torch.tensor(raw_logit)).item())
             score = max(0.0, min(1.0, raw_score))
             should = score >= self.urgency_threshold
             reply = "收到，我来帮你处理。" if should else None

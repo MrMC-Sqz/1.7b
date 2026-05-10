@@ -102,6 +102,12 @@ def main() -> None:
     parser.add_argument("--input", required=True, help="Path to labeled JSONL.")
     parser.add_argument("--output", default="", help="Optional path to save event JSONL.")
     parser.add_argument("--use-qwen", action="store_true", help="Use QwenIntentEngine.")
+    parser.add_argument("--use-score-head", action="store_true", help="Use ScoreHeadIntentEngine.")
+    parser.add_argument(
+        "--score-head-model-path",
+        default="",
+        help="ScoreHead model path, required when --use-score-head.",
+    )
     parser.add_argument("--threshold", type=float, default=0.7, help="Urgency threshold.")
     parser.add_argument("--wait-ms", type=int, default=800, help="Response wait window in ms.")
     parser.add_argument("--max-new-tokens", type=int, default=64, help="Max new tokens for intent model.")
@@ -112,6 +118,8 @@ def main() -> None:
     utterances = _build_utterances(rows)
     cfg = V1Config(
         use_qwen_intent_engine=args.use_qwen,
+        use_score_head_intent_engine=args.use_score_head,
+        score_head_model_path=args.score_head_model_path,
         urgency_threshold=args.threshold,
         wait_ms=args.wait_ms,
         intent_max_new_tokens=args.max_new_tokens,
@@ -127,6 +135,8 @@ def main() -> None:
         "num_samples": len(rows),
         "config": {
             "use_qwen": args.use_qwen,
+            "use_score_head": args.use_score_head,
+            "score_head_model_path": args.score_head_model_path,
             "threshold": args.threshold,
             "wait_ms": args.wait_ms,
             "max_new_tokens": args.max_new_tokens,
