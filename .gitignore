@@ -1,0 +1,14 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime artifacts
+out/
+
+# Local datasets and intermediate annotation artifacts
+data/raw/
+data/collected/
+data/pack/
+data/annotate_pool/
+data/annotate_review/
